@@ -1,57 +1,35 @@
 import torch
-from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
+from transformers import pipeline, BitsAndBytesConfig
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-# 1. Load processor
-print("Loading processor...")
-processor = AutoProcessor.from_pretrained(MODEL_ID)
-
-# 2. Configure 4-bit quantization with CPU offloading enabled
-print("Setting up 4-bit compression and offload config...")
+print("Setting up 4-bit compression config...")
 quantization_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.bfloat16,
     bnb_4bit_use_double_quant=True,
-    bnb_4bit_quant_type="nf4",
-    llm_int8_enable_fp32_cpu_offload=True # <--- FIX: Allows safe overflow handling
+    bnb_4bit_quant_type="nf4"
+    # Removed CPU offload to prevent meta-tensor generation errors
 )
 
-# 3. Load the model with hybrid quantization layout
-print("Loading model parameters (4-bit GPU + CPU offload hybrid)...")
-model = AutoModelForMultimodalLM.from_pretrained(
-    MODEL_ID,
-    quantization_config=quantization_config,
-    low_cpu_mem_usage=True,
-    device_map="auto" 
+print("Initializing Gemma 4 pipeline directly on CUDA...")
+# The pipeline handles the underlying model.to("cuda") state cleanly without meta device splits
+pipe = pipeline(
+    task="any-to-any",
+    model=MODEL_ID,
+    model_kwargs={"quantization_config": quantization_config, "low_cpu_mem_usage": True},
+    device_map="cuda:0"  # Forces explicit target mapping to your real GPU
 )
-print("Model loaded successfully within system parameters.")
 
-# Prompt
+# Set up chat query structured input
 messages = [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Write a short joke about saving RAM."},
 ]
 
-# 4. Map the inputs using the active model device layout
-print("Processing template tokens...")
-inputs = processor.apply_chat_template(
-    messages,
-    tokenize=True,
-    return_dict=True,
-    return_tensors="pt",
-    add_generation_prompt=True,
-    enable_thinking=False
-).to(model.device)
-
-input_len = inputs["input_ids"].shape[-1]
-
-# Generate output
 print("Generating response...")
-outputs = model.generate(**inputs, max_new_tokens=1024)
-response = processor.decode(outputs[input_len:], skip_special_tokens=False)
+# Pipeline automatically applies chat templates and extracts text variables natively
+outputs = pipe(messages, max_new_tokens=1024, generate_kwargs={"enable_thinking": False})
 
-# Parse output
 print("\n--- Model Output ---")
-parsed_response = processor.parse_response(response)
-print(parsed_response)
+print(outputs[0]["generated_text"])
