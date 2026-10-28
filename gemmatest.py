@@ -1,13 +1,13 @@
 import os
-# Force PyTorch to handle memory segments cleanly and prevent the 6.43 GB pre-allocation spike
+# Keeps memory segments clean
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
-from transformers import pipeline, BitsAndBytesConfig, AutoProcessor
+from transformers import pipeline, BitsAndBytesConfig, AutoProcessor, AutoModelForMultimodalLM
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-print("Configuring memory-capped processor constraints...")
+print("Loading processor...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 
 # 4-bit compression setup
@@ -18,16 +18,20 @@ quantization_config = BitsAndBytesConfig(
     bnb_4bit_quant_type="nf4"
 )
 
-print("Initializing Gemma 4 pipeline directly onto target VRAM...")
+print("Loading model explicitly to bypass pipeline allocation spikes...")
+# Instantiating the model first guarantees that quantization maps correctly to your 8GB VRAM
+model = AutoModelForMultimodalLM.from_pretrained(
+    MODEL_ID,
+    quantization_config=quantization_config,
+    device_map="auto",  # Let accelerate handle layer placement
+    low_cpu_mem_usage=True
+)
+
+print("Initializing Gemma 4 pipeline with preloaded model...")
 pipe = pipeline(
     task="any-to-any",
-    model=MODEL_ID,
-    processor=processor,
-    model_kwargs={
-        "quantization_config": quantization_config, 
-        "low_cpu_mem_usage": True,
-    },
-    device_map="cuda:0" # Explicitly maps to GPU 0 to bypass fallback tracing loops
+    model=model,
+    processor=processor
 )
 
 messages = [
@@ -41,9 +45,8 @@ outputs = pipe(
     max_new_tokens=64,
     generate_kwargs={
         "enable_thinking": False,
-        "max_length": 128
     }
 )
 
 print("\n--- Model Output ---")
-print(outputs["generated_text"])
+print(outputs[0]["generated_text"])
