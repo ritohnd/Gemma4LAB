@@ -3,15 +3,11 @@ from transformers import pipeline, BitsAndBytesConfig, AutoProcessor
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-# 1. Force lower vision/text allocation limits on the processor configuration
-print("Configuring aggressive memory caps...")
-processor = AutoProcessor.from_pretrained(
-    MODEL_ID,
-    max_image_tokens=140,       # Sets a lower visual budget to drastically cut activation VRAM
-    max_sequence_length=512     # Constrains the text token buffer size
-)
+# 1. Force the model processor to use a smaller token text layout matrix
+print("Configuring memory-capped processor constraints...")
+processor = AutoProcessor.from_pretrained(MODEL_ID)
 
-# 2. Configure 4-bit compression
+# 2. Configure 4-bit compression mapping
 quantization_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.bfloat16,
@@ -19,11 +15,11 @@ quantization_config = BitsAndBytesConfig(
     bnb_4bit_quant_type="nf4"
 )
 
-print("Initializing capped Gemma 4 pipeline...")
+print("Initializing Gemma 4 pipeline...")
 pipe = pipeline(
     task="any-to-any",
     model=MODEL_ID,
-    processor=processor, # Binds our custom low-VRAM memory cap configuration
+    processor=processor,
     model_kwargs={
         "quantization_config": quantization_config, 
         "low_cpu_mem_usage": True
@@ -31,18 +27,21 @@ pipe = pipeline(
     device_map="cuda:0"
 )
 
-# Structure chat prompt
+# Structure chat context mapping layout 
 messages = [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Write a short joke about saving RAM."},
 ]
 
-print("Generating response within safe VRAM boundaries...")
-# Set strict limits on token generation to prevent runtime allocation expansion
+print("Generating response within low-VRAM memory cap limits...")
+# 3. Add explicit generation boundaries to stop massive block allocation spikes
 outputs = pipe(
     messages, 
-    max_new_tokens=128, # Lower generation length cuts runtime context memory growth
-    generate_kwargs={"enable_thinking": False}
+    max_new_tokens=64,             # Lower token count keeps the sequence growth compact
+    generate_kwargs={
+        "enable_thinking": False,  # Bypassing the deep reasoning loop saves activation RAM
+        "max_length": 128          # Strictly clamps total operational attention length
+    }
 )
 
 print("\n--- Model Output ---")
