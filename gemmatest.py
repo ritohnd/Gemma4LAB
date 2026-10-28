@@ -3,22 +3,22 @@ from transformers import AutoProcessor, AutoModelForMultimodalLM
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
+# 1. Load the processor natively
 print("Loading processor...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 
-print("Loading model tensors directly to GPU...")
-# Explicitly force the model parameters to skip meta-device allocation artifacts
+# 2. Load model directly onto your hardware without meta-device partitioning
+print("Loading model layers...")
 model = AutoModelForMultimodalLM.from_pretrained(
     MODEL_ID,
-    torch_dtype=torch.bfloat16,   # Matches Gemma 4's native training precision
-    low_cpu_mem_usage=True
+    torch_dtype=torch.bfloat16,  # Force native BF16 precision 
+    low_cpu_mem_usage=False      # Prevents leaving lazy initialization footprints on 'meta'
 )
 
-# Manually send the unified architecture to your CUDA device
+# 3. Explicitly migrate the model to your GPU device
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = model.to(device)
-print(f"Model successfully anchored to: {model.device}")
-
+print(f"Model successfully loaded and anchored to: {model.device}")
 
 # Prompt
 messages = [
@@ -26,7 +26,8 @@ messages = [
     {"role": "user", "content": "Write a short joke about saving RAM."},
 ]
 
-# Process input
+# 4. Map the inputs directly to our explicit target device variable
+print("Processing template tokens...")
 inputs = processor.apply_chat_template(
     messages,
     tokenize=True,
@@ -34,14 +35,16 @@ inputs = processor.apply_chat_template(
     return_tensors="pt",
     add_generation_prompt=True,
     enable_thinking=False
-).to(model.device)
+).to(device) # <--- FIX: Using our direct string variable 'device' here instead of 'model.device'
+
 input_len = inputs["input_ids"].shape[-1]
 
-
 # Generate output
+print("Generating response...")
 outputs = model.generate(**inputs, max_new_tokens=1024)
 response = processor.decode(outputs[0][input_len:], skip_special_tokens=False)
 
 # Parse output
-processor.parse_response(response)
-
+print("\n--- Model Output ---")
+parsed_response = processor.parse_response(response)
+print(parsed_response)
