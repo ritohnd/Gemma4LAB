@@ -1,24 +1,30 @@
 import torch
-from transformers import AutoProcessor, AutoModelForMultimodalLM
+from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-# 1. Load the processor natively
+# 1. Load processor
 print("Loading processor...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 
-# 2. Load model directly onto your hardware without meta-device partitioning
-print("Loading model layers...")
-model = AutoModelForMultimodalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.bfloat16,  # Force native BF16 precision 
-    low_cpu_mem_usage=False      # Prevents leaving lazy initialization footprints on 'meta'
+# 2. Configure 4-bit quantization to fit in an 8GB GPU
+print("Setting up 4-bit compression config...")
+quantization_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+    bnb_4bit_quant_type="nf4"
 )
 
-# 3. Explicitly migrate the model to your GPU device
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = model.to(device)
-print(f"Model successfully loaded and anchored to: {model.device}")
+# 3. Load the model with quantization mappings
+print("Loading model parameters (Compressed 4-bit mode)...")
+model = AutoModelForMultimodalLM.from_pretrained(
+    MODEL_ID,
+    quantization_config=quantization_config,
+    low_cpu_mem_usage=True,
+    device_map="auto" # bitsandbytes natively requires device_map="auto" to map quantized blocks
+)
+print("Model compressed and loaded safely within VRAM limits.")
 
 # Prompt
 messages = [
@@ -26,7 +32,7 @@ messages = [
     {"role": "user", "content": "Write a short joke about saving RAM."},
 ]
 
-# 4. Map the inputs directly to our explicit target device variable
+# 4. Map the inputs using the current model device
 print("Processing template tokens...")
 inputs = processor.apply_chat_template(
     messages,
@@ -35,7 +41,7 @@ inputs = processor.apply_chat_template(
     return_tensors="pt",
     add_generation_prompt=True,
     enable_thinking=False
-).to(device) # <--- FIX: Using our direct string variable 'device' here instead of 'model.device'
+).to(model.device)
 
 input_len = inputs["input_ids"].shape[-1]
 
