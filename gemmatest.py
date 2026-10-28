@@ -2,7 +2,17 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
+import transformers
 from transformers import AutoProcessor, AutoModelForMultimodalLM, BitsAndBytesConfig
+
+# --- MONKEY PATCH: Squelch the aggressive pre-allocation spike ---
+def bypass_warmup(*args, **kwargs):
+    print(" Bypassing internal caching_allocator_warmup to save VRAM...")
+    return None
+
+# Overwrites the internal function so it doesn't request an extra 6.43 GB
+transformers.modeling_utils.caching_allocator_warmup = bypass_warmup
+# -----------------------------------------------------------------
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
@@ -17,8 +27,8 @@ quantization_config = BitsAndBytesConfig(
     llm_int8_enable_fp32_cpu_offload=True
 )
 
-# Custom device map explicitly pinning the large vision/audio encoders 
-# to CPU, ensuring the entire text decoder fits into your 8GB VRAM.
+# Custom device map forcing non-text peripheral layers to system RAM 
+# so your 8 GB VRAM has plenty of space for generation.
 custom_device_map = {
     "model.vision_encoder": "cpu",
     "model.audio_encoder": "cpu",
@@ -26,12 +36,12 @@ custom_device_map = {
     "lm_head": "cuda:0"
 }
 
-print("Loading model directly to host memory (bypassing meta tensors)...")
+print("Loading model directly to host memory...")
 model = AutoModelForMultimodalLM.from_pretrained(
     MODEL_ID,
     quantization_config=quantization_config,
     device_map=custom_device_map,
-    low_cpu_mem_usage=False  # Crucial: Avoids the meta tensor .item() bug
+    low_cpu_mem_usage=False
 )
 
 messages = [
@@ -58,9 +68,7 @@ with torch.no_grad():
         max_new_tokens=64
     )
 
-# Extract and decode the newly generated tokens
-# We slice from [0] to extract the single batch output tensor cleanly
-response = processor.decode(outputs[0][input_len:], skip_special_tokens=True)
+response = processor.decode(outputs[input_len:], skip_special_tokens=True)
 
 print("\n--- Model Output ---")
 print(response)
