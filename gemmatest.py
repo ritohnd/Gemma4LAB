@@ -1,14 +1,24 @@
+import torch
 from transformers import AutoProcessor, AutoModelForMultimodalLM
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-# Load model
+print("Loading processor...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
+
+print("Loading model tensors directly to GPU...")
+# Explicitly force the model parameters to skip meta-device allocation artifacts
 model = AutoModelForMultimodalLM.from_pretrained(
     MODEL_ID,
-    dtype="auto",
-    device_map="auto"
+    torch_dtype=torch.bfloat16,   # Matches Gemma 4's native training precision
+    low_cpu_mem_usage=True
 )
+
+# Manually send the unified architecture to your CUDA device
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
+print(f"Model successfully anchored to: {model.device}")
+
 
 # Prompt
 messages = [
