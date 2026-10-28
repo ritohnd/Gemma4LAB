@@ -1,13 +1,16 @@
+import os
+# Force PyTorch to handle memory segments cleanly and prevent the 6.43 GB pre-allocation spike
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+
 import torch
 from transformers import pipeline, BitsAndBytesConfig, AutoProcessor
 
 MODEL_ID = "google/gemma-4-E4B-it"
 
-# 1. Force the model processor to use a smaller token text layout matrix
 print("Configuring memory-capped processor constraints...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
 
-# 2. Configure 4-bit compression mapping
+# 4-bit compression setup
 quantization_config = BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_compute_dtype=torch.bfloat16,
@@ -15,32 +18,30 @@ quantization_config = BitsAndBytesConfig(
     bnb_4bit_quant_type="nf4"
 )
 
-print("Initializing Gemma 4 pipeline...")
+print("Initializing Gemma 4 pipeline directly onto target VRAM...")
 pipe = pipeline(
     task="any-to-any",
     model=MODEL_ID,
     processor=processor,
     model_kwargs={
         "quantization_config": quantization_config, 
-        "low_cpu_mem_usage": True
+        "low_cpu_mem_usage": True,
     },
-    device_map="cuda:0"
+    device_map="cuda:0" # Explicitly maps to GPU 0 to bypass fallback tracing loops
 )
 
-# Structure chat context mapping layout 
 messages = [
     {"role": "system", "content": "You are a helpful assistant."},
     {"role": "user", "content": "Write a short joke about saving RAM."},
 ]
 
-print("Generating response within low-VRAM memory cap limits...")
-# 3. Add explicit generation boundaries to stop massive block allocation spikes
+print("Generating response...")
 outputs = pipe(
     messages, 
-    max_new_tokens=64,             # Lower token count keeps the sequence growth compact
+    max_new_tokens=64,
     generate_kwargs={
-        "enable_thinking": False,  # Bypassing the deep reasoning loop saves activation RAM
-        "max_length": 128          # Strictly clamps total operational attention length
+        "enable_thinking": False,
+        "max_length": 128
     }
 )
 
