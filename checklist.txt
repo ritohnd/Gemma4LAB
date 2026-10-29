@@ -1,0 +1,39 @@
+
+1. Deploy the Exact QAT GGUF Variant via llama.cpp
+
+Instead of using standard post-training quantization, deploy Google's official Quantization-Aware Training (QAT) Q4_0 GGUF variant. QAT models are trained specifically to counteract the accuracy degradation of 4-bit compression, keeping the model extremely precise while capping its footprint to roughly 4 to 6 GB of total RAM.
+When serving via llama.cpp (llama-server), use specific performance flags tailored for Gemma 4:
+bash
+llama-server \
+  -m gemma-4-E4B-it-qat-q4_0-exact.gguf \
+  -c 2048 \
+  --flash-attn on \
+  --parallel 1
+Use code with caution.
+• Restrict Context (-c 2048): Never allow the context window to inflate to its maximum capacity on an edge system. Keeping context short prevents the Key-Value (KV) cache from bloating and consuming all your remaining VRAM/RAM.
+• Enable Flash Attention (--flash-attn on): This dramatically cuts processing latency for prompt tokens.
+
+2. Implement MTP Speculative Decoding (The Speed King)
+
+Google released official Multi-Token Prediction (MTP) drafter models specifically for Gemma 4 edge sizes. Speculative decoding works by letting a tiny, incredibly fast assistant model guess the next 2–3 tokens, which the primary E4B model verifies in parallel.
+This can yield a 3x speedup on lower-end compute boards without any reduction in reasoning logic.
+• To run this in llama.cpp, pass the accompanying assistant file using the draft flag:bash
+--spec-type draft-mtp -md gemma-4-E4B-it-qat-assistant-q4_0-exact.gguf --spec-draft-n-max 2
+Use code with caution.
+
+3. Enable Prefix Caching
+
+Because your system prompt (defining the car rules and structural JSON tools) is completely static and sent with every single request, your engine shouldn't recalculate it over and over.
+• Serving frameworks like vLLM (via --enable-prefix-caching) or SGLang (via RadixAttention) allow you to cache the pre-computed attention states of your system prompt.
+• When the driver speaks, Gemma can instantly skip processing the rules and focus entirely on the new command, saving hundreds of milliseconds.
+
+4. Move Heavy Non-LLM Tasks Outside Gemma
+
+A common latency trap is routing Automatic Speech Recognition (ASR/audio-to-text), text normalization, and fuzzy string matching directly through the LLM pipeline.
+• The Fix: Handle voice processing externally using tiny, dedicated local edge models (like an optimized whisper.tflite or a standard VAD/phrase matcher). Pass only clean, structured text to Gemma 4.
+
+5. Keep Tool Schemas Razor-Thin
+
+The more tokens Gemma has to process and output, the slower it performs. Instead of giving it massive JSON schemas detailing 50 different car commands, optimize your system design:
+• Use a shallow, highly simplified tool payload format.
+• Combine similar tools into broader categories (e.g., instead of separate functions for turn_on_defroster, turn_off_defroster, and max_defroster, use one function: set_defroster(mode: str)).
