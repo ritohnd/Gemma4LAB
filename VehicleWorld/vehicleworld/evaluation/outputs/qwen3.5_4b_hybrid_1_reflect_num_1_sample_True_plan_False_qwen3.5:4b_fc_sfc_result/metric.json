@@ -1,0 +1,9 @@
+{
+    "f1_positive": 0.3333333333333333,
+    "f1_negative": 0.9938837920489296,
+    "change_accuracy": 0.3333333333333333,
+    "completed_tasks": 1,
+    "input_tokens": 1486.4444444444443,
+    "output_tokens": 726.8888888888889,
+    "total_tasks": 1
+}
