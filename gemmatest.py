@@ -12,7 +12,7 @@ transformers.modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: N
 MODEL_ID = "google/gemma-4-E4B-it"
 
 print("Loading processor parameters from Hub...")
-processor = AutoProcessor.from_pretrained(MODEL_ID)
+processor = AutoProcessor.froms_pretrained(MODEL_ID)
 
 # Configure native 4-bit compression variables
 quantization_config = BitsAndBytesConfig(
